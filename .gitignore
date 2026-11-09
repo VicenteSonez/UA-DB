@@ -1,0 +1,41 @@
+# ── Datos de participantes (menores de edad): nunca a git ──
+BASE_DATOS_UA/
+*.wav
+*.WAV
+*.TextGrid
+*.zip
+*.rar
+
+# Listas con IDs de participantes (incluye la prueba final sellada)
+*_ids.csv
+
+# ── Salidas generadas por los scripts y notebooks (se regeneran) ──
+# Se ignora todo lo que está dentro de cualquier outputs/, salvo diccionarios y notebooks
+**/outputs/**
+!**/outputs/**/
+!**/outputs/**/diccionario_*.md
+!**/outputs/**/*.ipynb
+*.log
+*.csv.gz
+
+# ── Office: bloqueos temporales ──
+~$*
+
+# ── Python / notebooks ──
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# ── Contexto de asistentes (no va en este repo) ──
+.claude/
+CLAUDE.md
+.vibe-wise/
+graphify-out/
+.graphifyignore
+
+# ── Sistema ──
+Thumbs.db
+desktop.ini
+.DS_Store
