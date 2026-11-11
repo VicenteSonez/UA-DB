@@ -39,3 +39,6 @@ graphify-out/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# ── Notebooks en pausa (no se publican por ahora) ──
+modelado/02_*.ipynb
