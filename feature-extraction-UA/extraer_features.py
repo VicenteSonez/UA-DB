@@ -1,17 +1,18 @@
 """Extraccion de las 20 features acusticas CORE de la UA DB (una fila por sujeto y tarea).
 
 Familias (detalle y evidencia en diccionario_features.md):
-  - 15 funcionales de openSMILE eGeMAPSv01a sobre el WAV original: F0, jitter, shimmer, HNR,
-    variacion de loudness, alpha ratio, Hammarberg, pendiente espectral, MFCC1-4 y duracion
-    media de los segmentos sonoros.
+  - 15 funcionales de openSMILE eGeMAPSv01a: F0, jitter, shimmer, HNR, variacion de loudness,
+    alpha ratio, Hammarberg, pendiente espectral, MFCC1-4 y duracion media de los segmentos sonoros.
   - 2 formantes de la vocal /a/ (F1 y F2), medidos dentro de cada intervalo /a/ del TextGrid
     (metodo de Figueroa Saavedra et al., 2025) con Parselmouth sobre el audio a 16 kHz.
   - 3 de temporizacion: proporcion de tiempo en pausa, duracion media de las pausas y velocidad
     de articulacion (vocales del TextGrid por segundo de fonacion).
 
-Los valores reproducen los de la extraccion anterior (extract_all.py + extract_extra.py, version
-"extra-v1"). Se descartan las vocales anotadas despues del final del audio, y la consolidacion
-marca como wav_duplicado los WAV identicos entre tareas o sujetos (hoy: los 4 de 511).
+Tasa de muestreo armonizada: la base mezcla 22,05/24/44,1/48/64 kHz, asi que todo audio se lleva
+primero a 22,05 kHz (la tasa mas baja de la base; audresample/soxr) y todas las features salen de
+esa senal: eGeMAPS directo a 22,05 kHz y Parselmouth tras bajarla a 16 kHz. tasa_muestreo_hz
+guarda la tasa original del archivo. Se descartan las vocales anotadas despues del final del audio,
+y la consolidacion marca como wav_duplicado los WAV identicos entre tareas o sujetos (hoy: las 4 tareas de un sujeto).
 
 Salidas en --out-dir (por defecto outputs/):
   features_core.csv            todas las combinaciones sujeto x tarea, con estado
@@ -37,6 +38,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+import audresample
 import numpy as np
 import opensmile
 import pandas as pd
@@ -49,7 +51,8 @@ DATA_DIR = WORK_DIR.parent / "BASE_DATOS_UA"
 TASKS = ["DESCRIPCION", "PREGUNTA1", "PREGUNTA2", "TEXTO_EL_ABUELO"]
 VOWELS = ("a", "e", "i", "o", "u")
 
-SR = 16000             # Parselmouth trabaja a 16 kHz (la base mezcla 22,05-64 kHz)
+SR_ARMONIZADA = 22050  # tasa comun de todos los audios (la mas baja de la base)
+SR = 16000             # Parselmouth trabaja a 16 kHz, a partir de la senal armonizada
 SILENCE_DB = -25.0     # umbral de silencio relativo al maximo de intensidad
 MIN_PAUSE_S = 0.20
 MIN_SOUNDING_S = 0.05
@@ -214,12 +217,26 @@ def timing(snd, vowels):
 _SMILE = None
 
 
-def egemaps(wav: Path):
+def smile():
     global _SMILE
     if _SMILE is None:  # v01a por consistencia con la extraccion original (deprecada en el paquete)
         _SMILE = opensmile.Smile(feature_set=opensmile.FeatureSet.eGeMAPSv01a,
                                  feature_level=opensmile.FeatureLevel.Functionals)
-    return _SMILE.process_file(str(wav)).iloc[0][EGEMAPS].to_dict()
+    return _SMILE
+
+
+def cargar_armonizado(wav: Path):
+    """(senal mono float32 de forma (1, muestras) a SR_ARMONIZADA, Sound de Parselmouth a SR)."""
+    senal, sr = sf.read(str(wav), dtype="float32", always_2d=True)
+    senal = senal.mean(axis=1)[np.newaxis, :]  # mono (hoy todos los WAV validos son de 1 canal)
+    if sr != SR_ARMONIZADA:
+        senal = audresample.resample(senal, sr, SR_ARMONIZADA)
+    snd = parselmouth.Sound(senal.astype(np.float64), sampling_frequency=SR_ARMONIZADA).resample(SR)
+    return senal, snd
+
+
+def egemaps(senal):
+    return smile().process_signal(senal, SR_ARMONIZADA).iloc[0][EGEMAPS].to_dict()
 
 
 def process_one(pid, task):
@@ -237,10 +254,8 @@ def process_one(pid, task):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            row.update(egemaps(wav))
-            snd = parselmouth.Sound(str(wav)).convert_to_mono()
-            if snd.sampling_frequency != SR:
-                snd = snd.resample(SR)
+            senal, snd = cargar_armonizado(wav)
+            row.update(egemaps(senal))
             vowels, tg_status = vowel_intervals(find_file(task_dir, pid, task, ".textgrid"), duration)
             f1, f2, n_a = formants_a(snd, vowels)
             row.update(vw_a_f1_hz_mean=f1, vw_a_f2_hz_mean=f2, vocales_a_n=n_a, textgrid_estado=tg_status)
@@ -310,7 +325,7 @@ def wav_md5(pid, task):
 
 def mark_duplicates(df):
     """Un mismo WAV en dos tareas (o dos sujetos) no puede ser correcto en ambas: las dos quedan
-    como wav_duplicado. Ej.: 511 trae DESCRIPCION = PREGUNTA1 y PREGUNTA2 = TEXTO_EL_ABUELO."""
+    como wav_duplicado. Ej.: un sujeto trae DESCRIPCION = PREGUNTA1 y PREGUNTA2 = TEXTO_EL_ABUELO."""
     ok = df["estado"].isin([OK, WAV_DUPLICADO])
     hashes = pd.Series([wav_md5(p, t) for p, t in zip(df.loc[ok, "participant_id"], df.loc[ok, "task"])],
                        index=df.index[ok])
